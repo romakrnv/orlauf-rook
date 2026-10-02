@@ -9,6 +9,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,10 +30,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,12 +57,24 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                var page by rememberSaveable { mutableStateOf(Page.MAIN) }
-                val toMain = { page = Page.MAIN }
-                when (page) {
-                    Page.MAIN -> Screen(vm, onStats = { page = Page.STATS }, onSettings = { page = Page.SETTINGS })
-                    Page.STATS -> StatsScreen(vm, onBack = toMain)
-                    Page.SETTINGS -> SettingsScreen(vm, onBack = toMain)
+                // Surface задаёт фон и цвет текста по умолчанию, иначе Text рисуется чёрным.
+                Surface(Modifier.fillMaxSize()) {
+                    var page by rememberSaveable { mutableStateOf(Page.MAIN) }
+                    // Кого редактируем на Page.EDIT; null — новый пользователь.
+                    var editId by rememberSaveable { mutableStateOf<String?>(null) }
+                    val toMain = { page = Page.MAIN }
+                    val edit = { id: String? -> editId = id; page = Page.EDIT }
+                    when (page) {
+                        Page.MAIN -> Screen(
+                            vm,
+                            onStats = { page = Page.STATS },
+                            onUsers = { page = Page.USERS },
+                            onEditCurrent = { edit(vm.currentId.value) },
+                        )
+                        Page.STATS -> StatsScreen(vm, onBack = toMain)
+                        Page.USERS -> UsersScreen(vm, onBack = toMain, onEdit = edit)
+                        Page.EDIT -> UserEditScreen(vm, editId, onDone = { page = Page.USERS })
+                    }
                 }
             }
         }
@@ -64,7 +86,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Page { MAIN, STATS, SETTINGS }
+private enum class Page { MAIN, STATS, USERS, EDIT }
 
 private fun requiredPermissions(): Array<String> =
     if (Build.VERSION.SDK_INT >= 31)
@@ -73,9 +95,14 @@ private fun requiredPermissions(): Array<String> =
         arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
 
 @Composable
-private fun Screen(vm: MainViewModel, onStats: () -> Unit, onSettings: () -> Unit) {
+private fun Screen(vm: MainViewModel, onStats: () -> Unit, onUsers: () -> Unit, onEditCurrent: () -> Unit) {
     val s by vm.ui.collectAsStateWithLifecycle()
+    val users by vm.users.collectAsStateWithLifecycle()
+    val currentId by vm.currentId.collectAsStateWithLifecycle()
+    val favoriteId by vm.favoriteId.collectAsStateWithLifecycle()
     var confirmOff by remember { mutableStateOf(false) }
+    // Переключение во время тренировки — только после подтверждения.
+    var switchTo by remember { mutableStateOf<User?>(null) }
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -98,15 +125,21 @@ private fun Screen(vm: MainViewModel, onStats: () -> Unit, onSettings: () -> Uni
                 fontSize = 16.sp,
                 color = Color.Gray,
             )
-            TextButton(onClick = onStats) { Text("Статистика") }
-            TextButton(onClick = onSettings) { Text("Настройки") }
+            TextButton(onClick = onStats) { Text("Stats") }
+            TextButton(onClick = onUsers) { Text("Users") }
         }
 
-        if (s.profileMissing) {
+        UserPicker(users, currentId, favoriteId, onSelect = { id ->
+            if (id == currentId) return@UserPicker
+            if (s.seconds > 0) switchTo = users.firstOrNull { it.id == id } else vm.selectUser(id)
+        })
+
+        if (s.needsSetup) {
             Text(
-                "Укажите вес и рост в настройках, иначе калории и шаги будут неточными.",
+                "Укажите имя, вес и рост, иначе калории и шаги будут неточными. Нажмите, чтобы настроить.",
                 color = Color(0xFFFFB74D),
                 fontSize = 14.sp,
+                modifier = Modifier.clickable(onClick = onEditCurrent),
             )
         }
 
@@ -122,50 +155,108 @@ private fun Screen(vm: MainViewModel, onStats: () -> Unit, onSettings: () -> Uni
 
         Spacer(Modifier.weight(1f, fill = true))
 
+        // Дошли до точки маршрута — карточка с цитатой, по одной.
+        AnimatedContent(
+            targetState = s.milestones.firstOrNull(),
+            transitionSpec = { fadeIn(tween(ANIM_MS)) togetherWith fadeOut(tween(ANIM_MS)) },
+            label = "milestone",
+        ) { m -> if (m != null) MilestoneCard(m, onDismiss = vm::dismissMilestone) }
+
         s.message?.let {
             Text(it, color = Color(0xFFFFB74D), modifier = Modifier.fillMaxWidth())
-            TextButton(onClick = vm::dismissMessage) { Text("Скрыть") }
+            TextButton(onClick = vm::dismissMessage) { Text("Hide") }
         }
 
         val ready = s.link == Link.READY
-        if (!ready) {
-            Button(
-                onClick = { permLauncher.launch(requiredPermissions()) },
-                modifier = Modifier.fillMaxWidth().height(64.dp),
-            ) { Text("Подключиться", fontSize = 20.sp) }
-        } else {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = vm::slower, enabled = !s.paused,
-                    modifier = Modifier.weight(1f).height(72.dp)) { Text("− 0,1", fontSize = 24.sp) }
-                Button(onClick = vm::faster, enabled = !s.paused,
-                    modifier = Modifier.weight(1f).height(72.dp)) { Text("+ 0,1", fontSize = 24.sp) }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = vm::start, modifier = Modifier.weight(1f).height(56.dp)) { Text("Старт") }
-                Button(onClick = vm::togglePause, modifier = Modifier.weight(1f).height(56.dp)) {
-                    Text(if (s.paused) "Продолжить" else "Пауза")
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = vm::resetSession, modifier = Modifier.weight(1f)) { Text("Сброс") }
+        // Connect ↔ панель управления: плавная смена вместо скачка.
+        Crossfade(targetState = ready, animationSpec = tween(ANIM_MS), label = "controls") { isReady ->
+            if (!isReady) {
                 Button(
-                    onClick = { confirmOff = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C)),
-                    modifier = Modifier.weight(1f),
-                ) { Text("Выключить") }
+                    onClick = { permLauncher.launch(requiredPermissions()) },
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                ) { Text("Connect", fontSize = 20.sp) }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SmoothButton("− 0.1", vm::slower, enabled = s.canChangeSpeed,
+                            modifier = Modifier.weight(1f).height(72.dp), fontSize = 24.sp)
+                        SmoothButton("+ 0.1", vm::faster, enabled = s.canChangeSpeed,
+                            modifier = Modifier.weight(1f).height(72.dp), fontSize = 24.sp)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // Одно место на две кнопки: стоит — Start, едет — Power off.
+                        val label = when (s.pending) {
+                            BeltCommand.START -> "Starting… ${s.pendingLeft}"
+                            BeltCommand.POWER_OFF -> "Stopping… ${s.pendingLeft}"
+                            null -> if (s.beltMoving) "Power off" else "Start"
+                        }
+                        val offSlot = s.pending == BeltCommand.POWER_OFF || (s.pending == null && s.beltMoving)
+                        // Приглушённый красный из темы: заметно, но не выбивается из остального.
+                        val container by animateColorAsState(
+                            if (offSlot) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primary,
+                            tween(ANIM_MS), label = "slot",
+                        )
+                        val content by animateColorAsState(
+                            if (offSlot) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimary,
+                            tween(ANIM_MS), label = "slotText",
+                        )
+                        SmoothButton(
+                            label,
+                            onClick = { if (s.beltMoving) confirmOff = true else vm.start() },
+                            enabled = s.canStart || s.canPowerOff,
+                            containerColor = container,
+                            contentColor = content,
+                            modifier = Modifier.weight(1f).height(56.dp),
+                        )
+                        SmoothButton(
+                            if (s.paused) "Resume" else "Pause",
+                            vm::togglePause,
+                            enabled = s.beltMoving,
+                            modifier = Modifier.weight(1f).height(56.dp),
+                        )
+                    }
+                }
             }
         }
     }
+
+    switchTo?.let { u ->
+        val current = users.firstOrNull { it.id == currentId }
+        AlertDialog(
+            onDismissRequest = { switchTo = null },
+            title = { Text("Сменить на «${u.name}»?") },
+            text = { Text("Текущая тренировка сохранится за «${current?.name ?: ""}», счётчики обнулятся.") },
+            confirmButton = {
+                TextButton(onClick = { switchTo = null; vm.selectUser(u.id) }) { Text("Switch") }
+            },
+            dismissButton = { TextButton(onClick = { switchTo = null }) { Text("Cancel") } },
+        )
+    }
+
+    // Лента остановилась, пока был открыт диалог, — закрываем его.
+    LaunchedEffect(s.canPowerOff) { if (!s.canPowerOff) confirmOff = false }
 
     if (confirmOff) {
         AlertDialog(
             onDismissRequest = { confirmOff = false },
             title = { Text("Выключить дорожку?") },
-            text = { Text("Дорожка отключится полностью. Включить её снова можно только кнопкой на самой дорожке.") },
+            // Крупные кнопки на всю ширину: нажимать приходится на ходу.
             confirmButton = {
-                TextButton(onClick = { confirmOff = false; vm.powerOff() }) { Text("Выключить") }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = { confirmOff = false },
+                        modifier = Modifier.weight(1f).height(56.dp),
+                    ) { Text("Cancel", fontSize = 18.sp) }
+                    Button(
+                        onClick = { confirmOff = false; vm.powerOff() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                        modifier = Modifier.weight(1f).height(56.dp),
+                    ) { Text("Power off", fontSize = 18.sp) }
+                }
             },
-            dismissButton = { TextButton(onClick = { confirmOff = false }) { Text("Отмена") } },
         )
     }
 }

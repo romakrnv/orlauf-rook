@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Одинокая гора, луна и золотая тропа к ней. Всё важное — в центральной зоне 72×72. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- луна -->
+    <path android:fillColor="#FFFFD54F" android:pathData="M68,36m-4.5,0a4.5,4.5 0,1 1,9 0a4.5,4.5 0,1 1,-9 0" />
+    <!-- дальние горы -->
+    <path android:fillColor="#FF6A5AA8" android:pathData="M14,76 L36,55 L45,63 L54,53 L71,66 L79,59 L94,76 Z" />
+    <!-- гора -->
+    <path android:fillColor="#FFD0BCFF" android:pathData="M31,76 L54,39 L77,76 Z" />
+    <!-- снежная шапка -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M54,39 L47.8,49 L51.2,47 L54,50.5 L56.8,47 L60.2,49 Z" />
+    <!-- земля -->
+    <path android:fillColor="#FF2A2347" android:pathData="M0,74.5h108v33.5h-108z" />
+    <!-- тропа -->
+    <path android:fillColor="#FFFFB74D" android:pathData="M46,94 C50,86.5 59.5,85 57,80 C55.6,77.6 53.2,77.4 53.6,74.5 L55.6,74.5 C55.8,76.6 58.8,77.4 60.4,80 C63.8,86 56.5,88 60.5,94 Z" />
+</vector>

@@ -1,11 +1,7 @@
 package com.orlauf.rook
 
-import android.content.Context
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-
 /**
- * Параметры пользователя для расчёта калорий и шагов. Хранятся только на телефоне.
+ * Параметры пользователя для расчёта калорий и шагов. Хранятся только на телефоне, в [User].
  * strideCm == null — длина шага оценивается по росту.
  */
 data class Profile(
@@ -34,36 +30,5 @@ data class Profile(
             val st = if (stride.isBlank()) null else num(stride)?.takeIf { it in STRIDE_RANGE } ?: return null
             return Profile(w, h, st)
         }
-    }
-}
-
-class ProfileStore(context: Context) {
-    private val prefs = context.getSharedPreferences("profile", Context.MODE_PRIVATE)
-
-    private val _profile = MutableStateFlow(load())
-    val profile: StateFlow<Profile> = _profile
-
-    /** Пользователь ещё не вводил свои данные — считаем по значениям по умолчанию. */
-    val isSet: Boolean get() = prefs.contains(KEY_WEIGHT)
-
-    fun save(p: Profile) {
-        prefs.edit()
-            .putFloat(KEY_WEIGHT, p.weightKg.toFloat())
-            .putFloat(KEY_HEIGHT, p.heightCm.toFloat())
-            .apply { if (p.strideCm != null) putFloat(KEY_STRIDE, p.strideCm.toFloat()) else remove(KEY_STRIDE) }
-            .apply()
-        _profile.value = p
-    }
-
-    private fun load() = Profile(
-        weightKg = prefs.getFloat(KEY_WEIGHT, Profile.DEFAULT_WEIGHT_KG.toFloat()).toDouble(),
-        heightCm = prefs.getFloat(KEY_HEIGHT, Profile.DEFAULT_HEIGHT_CM.toFloat()).toDouble(),
-        strideCm = if (prefs.contains(KEY_STRIDE)) prefs.getFloat(KEY_STRIDE, 0f).toDouble() else null,
-    )
-
-    private companion object {
-        const val KEY_WEIGHT = "weight_kg"
-        const val KEY_HEIGHT = "height_cm"
-        const val KEY_STRIDE = "stride_cm"
     }
 }

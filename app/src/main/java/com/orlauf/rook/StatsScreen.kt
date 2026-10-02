@@ -45,7 +45,13 @@ private val DateFmt = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale("ru"))
 @Composable
 fun StatsScreen(vm: MainViewModel, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
-    val workouts by vm.workouts.collectAsStateWithLifecycle()
+    val users by vm.users.collectAsStateWithLifecycle()
+    val favoriteId by vm.favoriteId.collectAsStateWithLifecycle()
+    val currentId by vm.currentId.collectAsStateWithLifecycle()
+    // Чью статистику смотрим. По умолчанию — того, кто сейчас тренируется. На тренировку не влияет.
+    var viewedId by rememberSaveable { mutableStateOf(currentId) }
+    if (users.none { it.id == viewedId }) viewedId = currentId
+    val workouts by remember(viewedId) { vm.workoutsOf(viewedId) }.collectAsStateWithLifecycle()
     var period by rememberSaveable { mutableStateOf(Period.WEEK) }
 
     val zone = ZoneId.systemDefault()
@@ -59,8 +65,10 @@ fun StatsScreen(vm: MainViewModel, onBack: () -> Unit) {
     ) {
         Row(Modifier.fillMaxWidth()) {
             Text("Статистика", fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            TextButton(onClick = onBack) { Text("Назад") }
+            TextButton(onClick = onBack) { Text("Back") }
         }
+
+        if (users.size > 1) UserPicker(users, viewedId, favoriteId, onSelect = { viewedId = it })
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Card(Modifier.weight(1f)) { Metric("Стрик сейчас", days(streaks.current)) }
@@ -75,44 +83,52 @@ fun StatsScreen(vm: MainViewModel, onBack: () -> Unit) {
 
         if (stats.workouts == 0) {
             Text("За этот период тренировок нет.", color = Color.Gray)
-            return@Column
+        } else {
+            PeriodSections(stats, zone)
         }
 
-        Card {
-            BarChart(stats.bars)
-        }
+        // Путешествие считается по всей дистанции за всё время, независимо от вкладки.
+        val journey = remember(workouts) { Journey.state(workouts.sumOf { it.distanceM } / 1000.0) }
+        JourneySection(journey)
+    }
+}
 
-        Section("Итого") {
-            Grid(
-                "Дистанция, км" to km(stats.distanceM),
-                "Время" to duration(stats.seconds),
-                "Шаги" to "%,d".format(stats.steps),
-                "Ккал" to "%.0f".format(stats.kcal),
-                "Тренировок" to stats.workouts.toString(),
-                "Активных дней" to "${stats.activeDays} из ${stats.calendarDays}",
-            )
-        }
+@Composable
+private fun PeriodSections(stats: PeriodStats, zone: ZoneId) {
+    Card {
+        BarChart(stats.bars)
+    }
 
-        Section("В среднем за день") {
-            Grid(
-                "Дистанция, км" to km(stats.avgDistancePerDay),
-                "Шаги" to "%,d".format(stats.avgStepsPerDay),
-            )
-        }
+    Section("Итого") {
+        Grid(
+            "Дистанция, км" to km(stats.distanceM),
+            "Время" to duration(stats.seconds),
+            "Шаги" to "%,d".format(stats.steps),
+            "Ккал" to "%.0f".format(stats.kcal),
+            "Тренировок" to stats.workouts.toString(),
+            "Активных дней" to "${stats.activeDays} из ${stats.calendarDays}",
+        )
+    }
 
-        Section("В среднем за тренировку") {
-            Grid(
-                "Дистанция, км" to km(stats.avgDistancePerWorkout),
-                "Время" to duration(stats.avgSecondsPerWorkout),
-                "Скорость, км/ч" to "%.1f".format(stats.avgSpeedKmh),
-            )
-        }
+    Section("В среднем за день") {
+        Grid(
+            "Дистанция, км" to km(stats.avgDistancePerDay),
+            "Шаги" to "%,d".format(stats.avgStepsPerDay),
+        )
+    }
 
-        Section("Рекорды") {
-            stats.bestDay?.let { Record("Лучший день", "${km(it.distanceM)} км", it.date.format(DateFmt)) }
-            stats.longest?.let {
-                Record("Самая длинная тренировка", duration(it.seconds), Stats.dayOf(it, zone).format(DateFmt))
-            }
+    Section("В среднем за тренировку") {
+        Grid(
+            "Дистанция, км" to km(stats.avgDistancePerWorkout),
+            "Время" to duration(stats.avgSecondsPerWorkout),
+            "Скорость, км/ч" to "%.1f".format(stats.avgSpeedKmh),
+        )
+    }
+
+    Section("Рекорды") {
+        stats.bestDay?.let { Record("Лучший день", "${km(it.distanceM)} км", it.date.format(DateFmt)) }
+        stats.longest?.let {
+            Record("Самая длинная тренировка", duration(it.seconds), Stats.dayOf(it, zone).format(DateFmt))
         }
     }
 }

@@ -97,8 +97,12 @@ object WorkoutCodec {
     }.sortedBy { it.startMs }.toList()
 }
 
-/** История тренировок во внутренней памяти приложения (filesDir). */
-class WorkoutStore(file: File) {
+/**
+ * История тренировок во внутренней памяти приложения (filesDir).
+ * В памяти — все, включая только что начатую (чтобы статистика обновлялась сразу).
+ * На диск — только не короче minSeconds: случайные короткие включения в историю не попадают.
+ */
+class WorkoutStore(file: File, private val minSeconds: Double = Config.MIN_WORKOUT_S) {
     private val atomic = AtomicFile(file)
 
     private val _items = MutableStateFlow(load())
@@ -112,9 +116,23 @@ class WorkoutStore(file: File) {
         }
     }
 
+    /** То, что попадает на диск и в резервную копию. */
+    fun saved(): List<Workout> = _items.value.filter { it.seconds >= minSeconds }
+
+    /** Заменить всю историю (восстановление из резервной копии). */
+    fun replace(items: List<Workout>) {
+        _items.value = items.sortedBy { it.startMs }
+        persist()
+    }
+
+    /** Выкинуть из памяти законченные короткие тренировки. Идущую (keepStartMs) оставить. */
+    fun pruneShort(keepStartMs: Long?) {
+        _items.update { list -> list.filter { it.seconds >= minSeconds || it.startMs == keepStartMs } }
+    }
+
     @Synchronized
     fun persist() {
-        val bytes = WorkoutCodec.encode(_items.value).toByteArray()
+        val bytes = WorkoutCodec.encode(saved()).toByteArray()
         val out = try { atomic.startWrite() } catch (e: IOException) { return }
         try {
             out.write(bytes)
